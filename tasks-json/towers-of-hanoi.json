@@ -1,0 +1,28 @@
+{
+    "name": "Towers of Hanoi",
+    "description": "Solve the classic Towers of Hanoi puzzle. Given a number of disks and three pegs, move all disks from the first peg to the last peg following these rules: 1) Only one disk can be moved at a time. 2) Each move consists of taking the upper disk from one stack and placing it on top of another stack or on an empty peg. 3) No larger disk may be placed on top of a smaller disk.",
+    "modality": "Text only",
+    "diagram": null,
+    "citations": null,
+    "examples": [
+        [
+            {
+                "input": "Solve Towers of Hanoi for 3 disks.",
+                "output": "Here's the solution for Towers of Hanoi with 3 disks:\n\n1. Move disk 1 from A to C\n2. Move disk 2 from A to B\n3. Move disk 1 from C to B\n4. Move disk 3 from A to C\n5. Move disk 1 from B to A\n6. Move disk 2 from B to C\n7. Move disk 1 from A to C\n\nThe puzzle is now solved with all disks moved from peg A to peg C."
+            }
+        ],
+        [
+            {
+                "input": "How many moves are required to solve Towers of Hanoi for 5 disks?",
+                "output": "To solve the Towers of Hanoi puzzle with 5 disks, you need 31 moves.\n\nThe number of moves required for n disks can be calculated using the formula:\n\n2^n - 1\n\nFor 5 disks:\n2^5 - 1 = 32 - 1 = 31 moves\n\nThis is the minimum number of moves required to solve the puzzle while following all the rules."
+            }
+        ]
+    ],
+    "tags": [
+        "Problem Solving",
+        "Recursion",
+        "Mathematical Puzzle",
+        "Algorithm",
+        "Game Theory"
+    ]
+}

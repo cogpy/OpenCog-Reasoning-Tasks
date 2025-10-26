@@ -1,0 +1,15 @@
+{
+    "name": "Tags:",
+    "description": "",
+    "modality": "",
+    "diagram": null,
+    "citations": null,
+    "examples": [],
+    "tags": [
+        "LaTeX Generation",
+        "Document Structure",
+        "Measurement",
+        "Equation Formulation",
+        "Chain of Thoughts"
+    ]
+}

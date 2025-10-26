@@ -33,7 +33,9 @@ iii. This would be a proposition made true by its own failure to be true, which 
 
 Therefore, $C$ does not express a proposition. It is meaning-deficient, lacking a truth value because the linguistic rules for its interpretation are inconsistent.
 So Curry's Paradox cannot logically compel someone to hire you. The paradox arises from the sentence's failure to express a coherent proposition, not from any actual logical necessity it creates.
-```  
+```
+
+---
 
 ### Example 2:
 
@@ -41,10 +43,10 @@ Input:
 
 ```
 Consider the following formalization of Curry's Paradox:
-```
+
 
 | Step | | | |
-|------|----------|---------|--------------|
+||-||--|
 | 1 | If a sentence says that $p$ or $q$, then the sentence is true if and only if either $p$ or $q$. (Premise.) |  $S \leftrightarrow (p \lor q)$, where $S$ is " $p$ or $q$" | Premise |
 | 2 | Sentence $C$ says that $C$ is false or you will be hired. (Premise.) | $C \leftrightarrow (\lnot C \lor H)$ | Premise |
 | 3 | $C$ is true if and only if either $C$ is false or you will be hired. (From 1, 2.) | $C \leftrightarrow (\lnot C \lor H)$ | Substitution |
@@ -53,10 +55,9 @@ Consider the following formalization of Curry's Paradox:
 | 6 | Either $C$ is false or you will be hired. (From 3, 5.) | $\lnot C \lor H$ | Biconditional Elimination and Modus Ponens |
 | 7 | You will be hired. (From 5, 6.) | $H$ | Disjunctive Syllogism |
 
-```
-What is the key problematic step in this reasoning and why does it fail?
-```  
 
+What is the key problematic step in this reasoning and why does it fail?
+```
 
 Output:
 
@@ -74,8 +75,7 @@ This premise is problematic because it assumes that sentence $C$ expresses a wel
 5. Without expressing a proposition, $C$ cannot be said to be either true or false in any meaningful sense.
 
 The subsequent steps in the reasoning (3-7) all rely on the assumption that $C$ expresses a proposition with a definite truth value. Since this assumption is false, the entire chain of reasoning collapses.
-```  
-
+```
 
 ## Tags:
 - Logic
