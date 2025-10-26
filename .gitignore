@@ -2,3 +2,5 @@
 /.quarto/
 /_book/node_modules/
 package-lock.json
+__pycache__/
+*.pyc
