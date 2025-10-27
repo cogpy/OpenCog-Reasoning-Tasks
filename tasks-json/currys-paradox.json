@@ -1,0 +1,29 @@
+{
+    "name": "Curry's Paradox (semantic)",
+    "description": "This task involves examining a specific form of semantic paradox known as Curry's Paradox. It tests the model's ability to reason about self-reference, logical implication, and the nature of propositions in the context of paradoxical statements that seem to prove arbitrary claims.",
+    "modality": "Text only",
+    "diagram": null,
+    "citations": null,
+    "examples": [
+        [
+            {
+                "input": "Analyze the sentence $C$: \"Either this sentence is false, or you will hire me.\" Can this sentence logically compel someone to hire you?",
+                "output": "1. Suppose $C$ is false. Then the first disjunct (\"this sentence is false\") is true. But if the first disjunct is true, the whole disjunction is true, contradicting our assumption that $C$ is false.\n2. So, let's suppose $C$ is true. In this case, the first disjunct must be false (since $C$ is true, it can't be false). Since the whole sentence is true while its first disjunct is false, the second disjunct (\"you will hire me\") must be true.\n3. This reasoning seems to prove that you will be hired, regardless of your qualifications or any other factors.\n\nHowever, this apparent logical proof is paradoxical since:\n\ni. Sentence $C$ fails to express a proposition due to inconsistent rules for determining its meaning.\n\nii. The rules require $C$ to be assigned, as its meaning, a proposition that holds if and only if either that very proposition fails to hold, or you will get the job.\n\niii. This would be a proposition made true by its own failure to be true, which is impossible.\n\nTherefore, $C$ does not express a proposition. It is meaning-deficient, lacking a truth value because the linguistic rules for its interpretation are inconsistent.\nSo Curry's Paradox cannot logically compel someone to hire you. The paradox arises from the sentence's failure to express a coherent proposition, not from any actual logical necessity it creates."
+            }
+        ],
+        [
+            {
+                "input": "Consider the following formalization of Curry's Paradox:\n\n\n| Step | | | |\n||-||--|\n| 1 | If a sentence says that $p$ or $q$, then the sentence is true if and only if either $p$ or $q$. (Premise.) |  $S \\leftrightarrow (p \\lor q)$, where $S$ is \" $p$ or $q$\" | Premise |\n| 2 | Sentence $C$ says that $C$ is false or you will be hired. (Premise.) | $C \\leftrightarrow (\\lnot C \\lor H)$ | Premise |\n| 3 | $C$ is true if and only if either $C$ is false or you will be hired. (From 1, 2.) | $C \\leftrightarrow (\\lnot C \\lor H)$ | Substitution |\n| 4 | If $C$ is false, then $C$ is true. (From 3.) | $\\lnot C \\rightarrow C$ | Biconditional Elimination |\n| 5 | $C$ is true. (From 4.) | $C$ | Peirce's Law |\n| 6 | Either $C$ is false or you will be hired. (From 3, 5.) | $\\lnot C \\lor H$ | Biconditional Elimination and Modus Ponens |\n| 7 | You will be hired. (From 5, 6.) | $H$ | Disjunctive Syllogism |\n\n\nWhat is the key problematic step in this reasoning and why does it fail?",
+                "output": "The key problematic step in this formalization of Curry's Paradox is premise 2:\n\n2. Sentence $C$ says that $C$ is false or you will be hired. (Premise.)\n\nThis premise is problematic because it assumes that sentence $C$ expresses a well-defined proposition. However, this assumption is false. Here's why:\n\n1. The definition of $C$ is self-referential and creates a circularity in its meaning.\n2. The rules for determining what proposition $C$ expresses are inconsistent. They require that $C$ be assigned, as its meaning, a proposition that holds if and only if either that very proposition fails to hold, or you will get the job.\n3. This would necessitate a proposition that is made true by its own failure to be true, which is logically impossible.\n4. Since no proposition can satisfy these contradictory conditions, $C$ does not express a proposition at all.\n5. Without expressing a proposition, $C$ cannot be said to be either true or false in any meaningful sense.\n\nThe subsequent steps in the reasoning (3-7) all rely on the assumption that $C$ expresses a proposition with a definite truth value. Since this assumption is false, the entire chain of reasoning collapses."
+            }
+        ]
+    ],
+    "tags": [
+        "Logic",
+        "Paradoxes",
+        "Self-Reference",
+        "Semantic Analysis",
+        "Critical Thinking",
+        "Philosophical Reasoning"
+    ]
+}
