@@ -4,6 +4,11 @@
 
 No external dependencies required! The OpenCog Workbench uses only Python standard library.
 
+All 95 task definitions are catalogued; executable support is currently bounded
+structured truth tables, syllogisms, Hanoi, and stack ordering. Other families
+return `unsupported`, not simulated success. See OPENCOG_README.md for curriculum,
+mastery evidence, persistence, and regression-test documentation.
+
 ```bash
 # Clone the repository
 git clone https://github.com/cogpy/OpenCog-Reasoning-Tasks.git
@@ -65,10 +70,13 @@ for strategy in recommendations['recommended_strategies'][:3]:
     print(f"  - {strategy['name']} ({strategy['type']})")
 
 # Solve the task
-result = workbench.solve_task(task_id, orchestration_mode="collaborative")
+result = workbench.solve_task(
+    task_id, orchestration_mode="collaborative", instance={"disks": 3}
+)
 print(f"\nTask solved: {result['success']}")
 print(f"Patterns used: {result['patterns_used']}")
-print(f"Strategy: {result.get('strategy', 'N/A')}")
+print(f"Validation: {result['validation']}")
+print(workbench.recommend_next_tasks())
 ```
 
 ### 4. Use Agent-Zero Directly
@@ -125,7 +133,9 @@ print(f"Strategy: {result['strategy']}")
 ### Autonomous Mode
 Agent-Zero fully controls the entire solution process:
 ```python
-result = workbench.solve_task(task_id, orchestration_mode="autonomous")
+result = workbench.solve_task(
+    task_id, orchestration_mode="autonomous", instance={"disks": 3}
+)
 ```
 
 ### Collaborative Mode

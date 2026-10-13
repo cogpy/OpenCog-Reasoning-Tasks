@@ -40,6 +40,12 @@ Coming Soon
 
 This repository now includes the **OpenCog Multi-Agent Orchestration Workbench**, a sophisticated framework for autonomous multi-agent orchestration of LLM reasoning tasks.
 
+The workbench now loads all 95 task definitions and exposes a ranked,
+prerequisite-aware curriculum with persisted mastery evidence. Bounded structured
+truth tables, syllogisms, Hanoi, and stack ordering have executable backends;
+other families explicitly report unsupported capabilities. Native OpenCog
+subsystems and advanced reasoning remain integration work, not existing support.
+
 ### Key Features
 
 - **Agent-Zero Master Builder**: Coordinates cognitive architectures to develop sophisticated strategies for all reasoning challenges
@@ -56,12 +62,17 @@ from opencog import OpenCogWorkbench
 workbench = OpenCogWorkbench(tasks_dir="tasks")
 
 # Solve a task autonomously with Agent-Zero
-result = workbench.solve_task("towers-of-hanoi", orchestration_mode="autonomous")
+result = workbench.solve_task(
+    "towers-of-hanoi", orchestration_mode="autonomous", instance={"disks": 3}
+)
 print(result)
 
 # Get recommendations for a task
 recommendations = workbench.get_task_recommendations("deductive-logic-puzzles")
 print(recommendations)
+
+# Only prerequisite- and backend-ready families are recommended.
+print(workbench.recommend_next_tasks())
 ```
 
 ### Run the Demo

@@ -10,7 +10,7 @@ evolves strategies based on task requirements.
 import json
 import logging
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 
@@ -58,6 +58,13 @@ class Task:
     tags: List[str]
     examples: List[Dict[str, Any]] = field(default_factory=list)
     required_capabilities: List[str] = field(default_factory=list)
+    curriculum: Dict[str, Any] = field(default_factory=dict)
+    source: str = ""
+    audit_issues: List[Any] = field(default_factory=list)
+    instance: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 class AgentZero:
@@ -72,7 +79,11 @@ class AgentZero:
     5. Learning from outcomes to improve future performance
     """
     
-    def __init__(self):
+    def __init__(self, backend=None):
+        if backend is None:
+            from ..reasoning import ReasoningBackend
+            backend = ReasoningBackend()
+        self.backend = backend
         self.agents: Dict[str, Agent] = {}
         self.active_tasks: Dict[str, Task] = {}
         self.pattern_library = None  # Will be set by pattern library
@@ -144,6 +155,11 @@ class AgentZero:
             "suggested_agents": self._suggest_agent_allocation(task),
             "estimated_difficulty": self._estimate_difficulty(task)
         }
+        analysis["curriculum"] = task.curriculum
+        analysis["implementation_ready"] = task.id in self.backend.supported_tasks
+        analysis["missing_capabilities"] = sorted(
+            set(task.required_capabilities) - self.backend.available_capabilities
+        )
         
         logger.info(f"Task analysis complete for: {task.name}")
         return analysis
@@ -191,20 +207,18 @@ class AgentZero:
         """
         executor = self._get_agent_by_role(AgentRole.EXECUTOR)
         
-        results = {
-            "task_id": task.id,
-            "status": "in_progress",
-            "steps": [],
-            "solutions": []
-        }
-        
-        # Execute workflow
-        for step in architecture["workflow"]:
-            step_result = self._execute_step(step, task, architecture)
-            results["steps"].append(step_result)
-            
-        results["status"] = "completed"
-        logger.info(f"Task execution completed: {task.name}")
+        results = self.backend.execute(task.id, task.instance)
+        results["task_id"] = task.id
+        results["steps"] = [{
+            "action": "execute_reasoning",
+            "status": results["status"],
+            "output": results.get("answer")
+        }]
+        results["solutions"] = (
+            [results["answer"]] if results["status"] == "completed" else []
+        )
+        results["patterns_used"] = architecture["patterns"]
+        results["agents_involved"] = architecture["agents"]
         return results
         
     def validate_results(self, task: Task, results: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,21 +232,20 @@ class AgentZero:
         Returns:
             Validation report
         """
-        validator = self._get_agent_by_role(AgentRole.VALIDATOR)
-        
-        validation = {
-            "task_id": task.id,
-            "validation_status": "passed",
-            "quality_score": 0.0,
-            "issues": [],
-            "recommendations": []
-        }
-        
-        # Validate against success criteria
-        # This would include checking solution correctness, completeness, etc.
-        validation["quality_score"] = self._calculate_quality_score(results)
-        
-        logger.info(f"Validation completed for task: {task.name}")
+        if results.get("status") != "completed":
+            return {
+                "task_id": task.id,
+                "validation_status": results.get("status", "error"),
+                "evaluated": False,
+                "success": False,
+                "quality_score": 0.0,
+                "evidence": [],
+                "issues": results.get("errors", ["Execution did not complete"]),
+                "recommendations": []
+            }
+        validation = self.backend.validate(task.id, task.instance, results.get("answer"))
+        validation["task_id"] = task.id
+        validation.setdefault("recommendations", [])
         return validation
         
     def learn_from_execution(self, task: Task, results: Dict[str, Any], validation: Dict[str, Any]):
@@ -244,18 +257,27 @@ class AgentZero:
             results: Execution results
             validation: Validation results
         """
-        learner = self._get_agent_by_role(AgentRole.LEARNER)
+        if not validation.get("evaluated"):
+            return
         
         # Record performance
         performance_record = {
             "task_id": task.id,
             "task_name": task.name,
             "quality_score": validation["quality_score"],
-            "execution_time": len(results["steps"]),
-            "patterns_used": results.get("patterns_used", [])
+            "resource_usage": results.get("resource_usage", {}),
+            "patterns_used": results.get("patterns_used", []),
+            "success": validation.get("success", False),
+            "evidence": validation.get("evidence", []),
+            "evaluator_version": validation.get("evaluator_version")
         }
         
         self.performance_history.append(performance_record)
+        if self.pattern_library:
+            for pattern_id in performance_record["patterns_used"]:
+                self.pattern_library.record_pattern_use(
+                    pattern_id, performance_record["success"]
+                )
         
         # Update agent performance metrics
         for agent_id in [a["id"] for a in results.get("agents_involved", [])]:
@@ -313,42 +335,28 @@ class AgentZero:
         
     def _identify_required_patterns(self, task: Task) -> List[str]:
         """Identify cognitive patterns required for the task"""
-        # This would use the pattern library to match task requirements to patterns
-        patterns = []
-        
-        # Map task tags to patterns
-        tag_to_pattern = {
-            "Problem Solving": "decomposition_pattern",
-            "Recursion": "recursive_thinking_pattern",
-            "Pattern Recognition": "pattern_matching_pattern",
-            "Logic": "logical_reasoning_pattern",
-            "Mathematical": "mathematical_reasoning_pattern"
-        }
-        
-        for tag in task.tags:
-            if tag in tag_to_pattern:
-                patterns.append(tag_to_pattern[tag])
-                
-        return patterns if patterns else ["general_reasoning_pattern"]
+        if not self.pattern_library:
+            return []
+        return [
+            pattern.id for pattern in self.pattern_library.match_patterns_to_task(
+                task.description, task.tags
+            )[:3]
+        ]
         
     def _suggest_agent_allocation(self, task: Task) -> List[Dict[str, Any]]:
         """Suggest agent allocation for the task"""
         # All tasks need these core agents
         return [
             {"role": AgentRole.ANALYZER.value, "count": 1},
+            {"role": AgentRole.STRATEGIST.value, "count": 1},
             {"role": AgentRole.EXECUTOR.value, "count": 1},
-            {"role": AgentRole.VALIDATOR.value, "count": 1}
+            {"role": AgentRole.VALIDATOR.value, "count": 1},
+            {"role": AgentRole.LEARNER.value, "count": 1}
         ]
         
     def _estimate_difficulty(self, task: Task) -> str:
         """Estimate task difficulty"""
-        complexity = len(task.tags) + len(task.examples) * 0.5
-        if complexity < 5:
-            return "easy"
-        elif complexity < 10:
-            return "medium"
-        else:
-            return "hard"
+        return task.curriculum.get("difficulty", "unrated")
             
     def _design_workflow(self, task: Task, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Design the execution workflow"""
@@ -382,22 +390,6 @@ class AgentZero:
         """Allocate an agent based on specification"""
         role = AgentRole(agent_spec["role"])
         return self._get_agent_by_role(role)
-        
-    def _execute_step(self, step: Dict[str, Any], task: Task, architecture: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a single workflow step"""
-        return {
-            "step": step["step"],
-            "action": step["action"],
-            "status": "completed",
-            "output": f"Step {step['step']} completed"
-        }
-        
-    def _calculate_quality_score(self, results: Dict[str, Any]) -> float:
-        """Calculate quality score for results"""
-        # Simplified scoring - in real implementation would be more sophisticated
-        if results["status"] == "completed":
-            return 0.85
-        return 0.0
         
     def _update_agent_metrics(self, agent_id: str, performance: Dict[str, Any]):
         """Update performance metrics for an agent"""

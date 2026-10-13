@@ -113,8 +113,9 @@ def demo_task_solving(workbench):
         print("No tasks loaded. Please ensure tasks are in the 'tasks' directory.")
         return
         
-    # Get a sample task
-    task = list(workbench.tasks.values())[0]
+    # Use a supported concrete instance rather than a task-family description.
+    task = workbench.tasks["truth-table-completions"]
+    instance = {"expression": "(P AND Q) OR NOT P"}
     
     print(f"Solving task: {task.name}")
     print(f"Description: {task.description}")
@@ -137,10 +138,15 @@ def demo_task_solving(workbench):
     print("Solving task in COLLABORATIVE mode...")
     print(f"{'-'*80}\n")
     
-    result = workbench.solve_task(task.id, orchestration_mode="collaborative")
+    result = workbench.solve_task(
+        task.id, orchestration_mode="collaborative", instance=instance
+    )
     
     print("Solution Result:")
     print(f"  Success: {result.get('success', 'Unknown')}")
+    print(f"  Status: {result['status']}")
+    print(f"  Answer: {result['answer']}")
+    print(f"  Next tasks: {workbench.recommend_next_tasks()}")
     print(f"  Patterns Used: {', '.join(result.get('patterns_used', []))}")
     if 'strategy' in result:
         print(f"  Strategy: {result['strategy']}")

@@ -355,7 +355,10 @@ class Orchestrator:
             "strategy": strategy,
             "agents_involved": [],
             "execution_trace": [],
-            "final_result": None
+            "final_result": None,
+            "status": "planned",
+            "success": False,
+            "evaluated": False
         }
         
         if strategy == "collaborative":
@@ -375,6 +378,8 @@ class Orchestrator:
             # Agents work on task in sequence
             result["agents_involved"] = session["agents"]
             result["execution_order"] = session["agents"]
+        else:
+            raise ValueError(f"Unknown orchestration strategy: {strategy}")
             
         logger.info(f"Orchestrated multi-agent task {task['id']} with strategy: {strategy}")
         return result
@@ -400,6 +405,54 @@ class Orchestrator:
             "tasks": task_statuses,
             "progress": self.coordinator.monitor_progress()
         }
+
+    def run_pipeline(self, session_id: str, task: Dict[str, Any], stages, max_steps: int = 5):
+        """Run bounded, ordered handlers with shared results and message provenance."""
+        if session_id not in self.active_sessions:
+            raise ValueError(f"Session {session_id} not found")
+        if not stages or len(stages) > max_steps:
+            raise ValueError("Pipeline exceeds its step budget or has no handlers")
+        session = self.active_sessions[session_id]
+        if session["status"] != "active":
+            raise ValueError("Session is not active")
+        for agent_id, _, _ in stages:
+            if agent_id not in session["agents"]:
+                raise ValueError(f"Agent {agent_id} is not in the session")
+        context = {"task": task}
+        trace = []
+        session["tasks"].append(task["id"])
+        self.coordinator.task_queue.add_task(task)
+        self.coordinator.task_queue.assign_task(task["id"], stages[0][0])
+        sender = "coordinator"
+        try:
+            for agent_id, output_key, handler in stages:
+                self.coordinator.agent_load[agent_id] += 1
+                self.coordinator.message_bus.publish(Message(
+                    sender=sender, receiver=agent_id,
+                    message_type=MessageType.TASK_ASSIGNMENT,
+                    content={"task_id": task["id"], "stage": output_key}
+                ))
+                self.coordinator.message_bus.get_messages_for(agent_id)
+                try:
+                    context[output_key] = handler(context)
+                finally:
+                    self.coordinator.agent_load[agent_id] -= 1
+                trace.append({"agent_id": agent_id, "stage": output_key, "status": "completed"})
+                self.coordinator.message_bus.publish(Message(
+                    sender=agent_id, receiver="coordinator",
+                    message_type=MessageType.PROVIDE_RESULT,
+                    content={"task_id": task["id"], "stage": output_key}
+                ))
+                self.coordinator.message_bus.get_messages_for("coordinator")
+                sender = agent_id
+        except Exception as error:
+            trace.append({"stage": output_key, "status": "error", "error": str(error)})
+            self.coordinator.task_queue.complete_task(task["id"], {"status": "error"})
+            session["execution_trace"] = trace
+            raise
+        self.coordinator.task_queue.complete_task(task["id"], context)
+        session["execution_trace"] = trace
+        return {"context": context, "execution_trace": trace}
         
     def close_session(self, session_id: str):
         """Close an orchestration session"""

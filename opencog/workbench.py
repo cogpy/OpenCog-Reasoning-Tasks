@@ -8,6 +8,9 @@ the existing reasoning tasks, providing a complete workbench for LLM reasoning.
 import os
 import json
 import logging
+import hashlib
+from copy import deepcopy
+from dataclasses import replace
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
@@ -16,6 +19,9 @@ from .agents.agent_zero import AgentZero, Agent, Task, AgentRole
 from .patterns.pattern_library import PatternLanguageLibrary, CognitivePattern
 from .orchestration.multi_agent import Orchestrator
 from .strategies.strategy_system import StrategyRepository, StrategyExecutor
+from .catalog import parse_task_file, load_catalog, check_json_consistency
+from .curriculum import CURRICULUM, CurriculumScheduler
+from .reasoning import ReasoningBackend
 
 
 logger = logging.getLogger(__name__)
@@ -43,11 +49,19 @@ class OpenCogWorkbench:
             patterns_path: Path to save/load pattern library
         """
         # Initialize core components
-        self.agent_zero = AgentZero()
+        self.backend = ReasoningBackend()
+        self.agent_zero = AgentZero(backend=self.backend)
         self.pattern_library = PatternLanguageLibrary(library_path=patterns_path)
         self.orchestrator = Orchestrator()
         self.strategy_repository = StrategyRepository()
-        self.strategy_executor = StrategyExecutor(pattern_library=self.pattern_library)
+        self.strategy_executor = StrategyExecutor(
+            pattern_library=self.pattern_library, backend=self.backend
+        )
+        self.scheduler = CurriculumScheduler(
+            available_capabilities=self.backend.available_capabilities,
+            supported_tasks=self.backend.supported_tasks
+        )
+        self.catalog_report = {}
         
         # Connect components
         self.agent_zero.pattern_library = self.pattern_library
@@ -74,66 +88,40 @@ class OpenCogWorkbench:
         Args:
             tasks_dir: Directory containing task markdown files
         """
-        tasks_path = Path(tasks_dir)
-        if not tasks_path.exists():
-            logger.warning(f"Tasks directory not found: {tasks_dir}")
-            return
-            
-        loaded_count = 0
-        for task_file in tasks_path.glob("*.md"):
-            try:
-                task = self._parse_task_file(task_file)
-                if task:
-                    self.tasks[task.id] = task
-                    loaded_count += 1
-            except Exception as e:
-                logger.error(f"Error loading task {task_file.name}: {e}")
-                
-        logger.info(f"Loaded {loaded_count} reasoning tasks")
+        definitions, self.catalog_report = load_catalog(Path(tasks_dir))
+        for definition in definitions:
+            task = self._task_from_definition(definition)
+            self.tasks[task.id] = task
+        json_directory = Path(tasks_dir).parent / "tasks-json"
+        if json_directory.is_dir():
+            self.catalog_report["json_consistency"] = check_json_consistency(
+                Path(tasks_dir), json_directory
+            )
+        logger.info("Loaded %s reasoning tasks", len(definitions))
         
     def _parse_task_file(self, file_path: Path) -> Optional[Task]:
         """Parse a task markdown file into a Task object"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-        # Simple parsing - extract key information
-        lines = content.split('\n')
-        
-        name = ""
-        description = ""
-        modality = ""
-        tags = []
-        
-        for i, line in enumerate(lines):
-            if line.startswith('# ') and not name:
-                name = line[2:].strip()
-            elif line.startswith('## Description:'):
-                if i + 1 < len(lines):
-                    description = lines[i + 1].strip()
-            elif line.startswith('## Modality:'):
-                if i + 1 < len(lines):
-                    modality = lines[i + 1].strip()
-            elif line.startswith('## Tags:'):
-                # Collect tags
-                j = i + 1
-                while j < len(lines) and lines[j].startswith('- '):
-                    tags.append(lines[j][2:].strip())
-                    j += 1
-                    
-        if not name:
-            return None
-            
-        task_id = file_path.stem
-        
+        return self._task_from_definition(parse_task_file(file_path))
+
+    def _task_from_definition(self, definition: Dict[str, Any]) -> Task:
+        metadata = deepcopy(CURRICULUM.get(definition["id"], {}))
         return Task(
-            id=task_id,
-            name=name,
-            description=description,
-            modality=modality,
-            tags=tags
+            id=definition["id"],
+            name=definition["name"],
+            description=definition["description"],
+            modality=definition["modality"],
+            tags=definition["tags"],
+            examples=definition["examples"],
+            required_capabilities=metadata.get("required_capabilities", []),
+            curriculum=metadata,
+            source=str(definition.get("source", "")),
+            audit_issues=definition.get("audit_issues", [])
         )
         
-    def solve_task(self, task_id: str, orchestration_mode: str = "autonomous") -> Dict[str, Any]:
+    def solve_task(
+        self, task_id: str, orchestration_mode: str = "autonomous",
+        instance: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Solve a reasoning task using the OpenCog system
         
@@ -150,17 +138,23 @@ class OpenCogWorkbench:
         if task_id not in self.tasks:
             raise ValueError(f"Task {task_id} not found")
             
-        task = self.tasks[task_id]
+        task = replace(self.tasks[task_id], instance=deepcopy(instance))
         logger.info(f"Starting to solve task: {task.name}")
         
         if orchestration_mode == "autonomous":
-            return self._solve_autonomous(task)
+            result = self._solve_autonomous(task)
         elif orchestration_mode == "collaborative":
-            return self._solve_collaborative(task)
+            result = self._solve_collaborative(task)
         elif orchestration_mode == "guided":
             return self._solve_guided(task)
         else:
             raise ValueError(f"Unknown orchestration mode: {orchestration_mode}")
+        validation = result.get("validation", {})
+        if validation.get("evaluated") and task_id in CURRICULUM:
+            self.scheduler.record_attempt(
+                task_id, self._instance_id(instance), validation, split="practice"
+            )
+        return result
             
     def _solve_autonomous(self, task: Task) -> Dict[str, Any]:
         """Solve task autonomously using Agent-Zero"""
@@ -173,6 +167,13 @@ class OpenCogWorkbench:
             "mode": "autonomous",
             "task": task.name,
             "orchestration_result": result,
+            "status": result["results"]["status"],
+            "answer": result["results"].get("answer"),
+            "validation": result["validation"],
+            "evidence": result["results"].get("evidence", []),
+            "confidence": result["results"].get("confidence"),
+            "resource_usage": result["results"].get("resource_usage", {}),
+            "errors": result["results"].get("errors", []),
             "patterns_used": result["analysis"].get("required_patterns", []),
             "success": result["validation"]["validation_status"] == "passed"
         }
@@ -186,56 +187,35 @@ class OpenCogWorkbench:
         agent_ids = list(self.agent_zero.agents.keys())
         self.orchestrator.create_session(session_id, agent_ids)
         
-        # Match patterns to task
-        patterns = self.pattern_library.match_patterns_to_task(
-            task.description,
-            task.tags
-        )
-        
-        # Find suitable strategies
-        pattern_ids = [p.id for p in patterns[:3]]  # Top 3 patterns
-        strategies = self.strategy_repository.find_strategies_for_task(
-            task.tags,
-            pattern_ids
-        )
-        
-        # Orchestrate with selected strategy
-        if strategies:
-            strategy = strategies[0]
-            logger.info(f"Using strategy: {strategy.name}")
-            
-            # Execute strategy
-            execution = self.strategy_executor.execute_strategy(
-                strategy,
-                task.to_dict() if hasattr(task, 'to_dict') else {
-                    "id": task.id,
-                    "name": task.name,
-                    "description": task.description
-                }
-            )
-            
-            # Record results
-            self.strategy_repository.record_strategy_use(strategy.id, execution["success"])
-            for pattern in patterns[:3]:
-                self.pattern_library.record_pattern_use(pattern.id, execution["success"])
-                
-            result = {
-                "mode": "collaborative",
-                "task": task.name,
-                "session_id": session_id,
-                "patterns_used": [p.name for p in patterns[:3]],
-                "strategy": strategy.name,
-                "execution": execution,
-                "success": execution["success"]
-            }
-        else:
-            result = {
-                "mode": "collaborative",
-                "task": task.name,
-                "error": "No suitable strategies found"
-            }
-            
-        return result
+        stages = [
+            ("analyzer_01", "analysis", lambda context: self.agent_zero.analyze_task(task)),
+            ("strategist_01", "architecture", lambda context:
+             self.agent_zero.build_cognitive_architecture(task, context["analysis"])),
+            ("executor_01", "execution", lambda context:
+             self.agent_zero.execute_with_architecture(task, context["architecture"])),
+            ("validator_01", "validation", lambda context:
+             self.agent_zero.validate_results(task, context["execution"])),
+            ("learner_01", "learning", lambda context:
+             self.agent_zero.learn_from_execution(task, context["execution"], context["validation"]))
+        ]
+        try:
+            pipeline = self.orchestrator.run_pipeline(session_id, task.to_dict(), stages)
+        finally:
+            self.orchestrator.close_session(session_id)
+        context = pipeline["context"]
+        execution = context["execution"]
+        validation = context["validation"]
+        return {
+            "mode": "collaborative", "task": task.name, "session_id": session_id,
+            "execution": execution, "execution_trace": pipeline["execution_trace"],
+            "status": execution["status"], "answer": execution.get("answer"),
+            "validation": validation, "success": validation.get("success", False),
+            "patterns_used": context["analysis"]["required_patterns"],
+            "evidence": execution.get("evidence", []),
+            "confidence": execution.get("confidence"),
+            "resource_usage": execution.get("resource_usage", {}),
+            "errors": execution.get("errors", [])
+        }
         
     def _solve_guided(self, task: Task) -> Dict[str, Any]:
         """Solve task with user guidance"""
@@ -258,6 +238,9 @@ class OpenCogWorkbench:
             "mode": "guided",
             "task": task.name,
             "analysis": analysis,
+            "status": "guided",
+            "success": False,
+            "evaluated": False,
             "suggested_patterns": [p.to_dict() for p in patterns[:5]],
             "suggested_strategies": [s.to_dict() for s in strategies[:5]],
             "message": "Review suggestions and provide guidance for execution"
@@ -303,6 +286,11 @@ class OpenCogWorkbench:
                     
         return {
             "task": task.name,
+            "curriculum": task.curriculum,
+            "readiness": self.scheduler.readiness(task_id) if task_id in CURRICULUM else {
+                "ready": False, "reason": "Task has no reviewed curriculum metadata"
+            },
+            "mastery": self.scheduler.mastery(task_id) if task_id in CURRICULUM else {},
             "recommended_patterns": [
                 {
                     "name": p.name,
@@ -356,7 +344,8 @@ class OpenCogWorkbench:
         return {
             "tasks": {
                 "total": len(self.tasks),
-                "by_tag": self._count_by_tag()
+                "by_tag": self._count_by_tag(),
+                "catalog_report": self.catalog_report
             },
             "agents": {
                 "total": len(self.agent_zero.agents),
@@ -376,6 +365,47 @@ class OpenCogWorkbench:
                 "avg_success_rate": self._calculate_avg_success_rate()
             }
         }
+
+    @staticmethod
+    def _instance_id(instance: Dict[str, Any]) -> str:
+        encoded = json.dumps(instance, sort_keys=True, allow_nan=False).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def get_curriculum(self) -> List[Dict[str, Any]]:
+        """Return ranked metadata, backend readiness, and measured mastery."""
+        return [
+            dict(task_id=task_id, **deepcopy(metadata),
+                 readiness=self.scheduler.readiness(task_id),
+                 mastery=self.scheduler.mastery(task_id))
+            for task_id, metadata in sorted(
+                CURRICULUM.items(), key=lambda entry: (
+                    entry[1]["rank"], entry[1].get("order", 0), entry[0]
+                )
+            ) if task_id in self.tasks
+        ]
+
+    def recommend_next_tasks(self, limit: int = 10) -> List[Dict[str, Any]]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+            raise ValueError("limit must be a nonnegative integer")
+        return [
+            item for item in self.scheduler.recommend(limit=len(CURRICULUM))
+            if item["task_id"] in self.tasks
+        ][:limit]
+
+    def evaluate_instance(
+        self, task_id: str, instance: Dict[str, Any], answer: Any, *,
+        split: str = "practice", transfer: bool = False
+    ) -> Dict[str, Any]:
+        """Independently evaluate an answer; caller-declared splits are not certified benchmarks."""
+        if task_id not in self.tasks:
+            raise ValueError(f"Task {task_id} not found")
+        validation = self.backend.validate(task_id, instance, answer)
+        if validation.get("evaluated") and task_id in CURRICULUM:
+            self.scheduler.record_attempt(
+                task_id, self._instance_id(instance), validation,
+                split=split, transfer=transfer
+            )
+        return validation
         
     def save_state(self, directory: str):
         """Save workbench state to directory"""
@@ -394,7 +424,31 @@ class OpenCogWorkbench:
                 indent=2
             )
             
+        self.scheduler.save(Path(directory) / "mastery.json")
+        with open(Path(directory) / "execution_history.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "agent_zero": self.agent_zero.performance_history,
+                "strategy_executor": self.strategy_executor.execution_history
+            }, f, indent=2)
         logger.info(f"Saved workbench state to {directory}")
+
+    def load_state(self, directory: str):
+        """Restore saved evidence without enabling unavailable reasoning backends."""
+        directory = Path(directory)
+        self.scheduler.load(directory / "mastery.json")
+        self.pattern_library.load_library(str(directory / "patterns.json"))
+        from .strategies.strategy_system import Strategy, StrategyType
+        with open(directory / "strategies.json", encoding="utf-8") as f:
+            strategies = json.load(f)
+        restored = {}
+        for strategy_id, data in strategies.items():
+            data["strategy_type"] = StrategyType(data["strategy_type"])
+            restored[strategy_id] = Strategy(**data)
+        self.strategy_repository.strategies = restored
+        with open(directory / "execution_history.json", encoding="utf-8") as f:
+            history = json.load(f)
+        self.agent_zero.performance_history = history["agent_zero"]
+        self.strategy_executor.execution_history = history["strategy_executor"]
         
     # Helper methods
     

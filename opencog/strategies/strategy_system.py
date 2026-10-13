@@ -74,7 +74,7 @@ class StrategyRepository:
                 name="Decomposition Strategy",
                 strategy_type=StrategyType.SYSTEMATIC,
                 description="Break down complex problems into manageable sub-problems",
-                applicable_patterns=["decomposition_pattern", "hierarchical_planning_pattern"],
+                applicable_patterns=["decomposition_pattern"],
                 steps=[
                     {"step": 1, "action": "identify_problem_structure", "description": "Analyze the problem to identify natural divisions"},
                     {"step": 2, "action": "decompose", "description": "Break problem into independent sub-problems"},
@@ -119,7 +119,7 @@ class StrategyRepository:
                 name="Working Backward Strategy",
                 strategy_type=StrategyType.HEURISTIC,
                 description="Start from goal and work backward to find solution path",
-                applicable_patterns=["working_backward_pattern", "means_ends_analysis_pattern"],
+                applicable_patterns=["working_backward_pattern"],
                 steps=[
                     {"step": 1, "action": "define_goal", "description": "Clearly define the goal state"},
                     {"step": 2, "action": "identify_prerequisites", "description": "Identify what would lead to the goal"},
@@ -134,7 +134,7 @@ class StrategyRepository:
                 name="Hypothesis Testing Strategy",
                 strategy_type=StrategyType.ABDUCTIVE,
                 description="Generate hypotheses and test them systematically",
-                applicable_patterns=["hypothesis_testing_pattern", "causal_reasoning_pattern"],
+                applicable_patterns=["causal_reasoning_pattern"],
                 steps=[
                     {"step": 1, "action": "generate_hypotheses", "description": "Generate plausible hypotheses"},
                     {"step": 2, "action": "design_tests", "description": "Design tests to discriminate between hypotheses"},
@@ -164,7 +164,7 @@ class StrategyRepository:
                 name="Creative Exploration Strategy",
                 strategy_type=StrategyType.CREATIVE,
                 description="Explore unconventional approaches to find novel solutions",
-                applicable_patterns=["divergent_thinking_pattern", "lateral_thinking_pattern"],
+                applicable_patterns=["abstraction_pattern", "analogy_pattern"],
                 steps=[
                     {"step": 1, "action": "brainstorm", "description": "Generate diverse ideas without filtering"},
                     {"step": 2, "action": "combine", "description": "Combine ideas in novel ways"},
@@ -332,7 +332,11 @@ class StrategyExecutor:
     Takes a strategy and applies it step-by-step to solve a task.
     """
     
-    def __init__(self, pattern_library=None):
+    def __init__(self, pattern_library=None, backend=None):
+        if backend is None:
+            from ..reasoning import ReasoningBackend
+            backend = ReasoningBackend()
+        self.backend = backend
         self.pattern_library = pattern_library
         self.execution_history: List[Dict[str, Any]] = []
         
@@ -355,65 +359,20 @@ class StrategyExecutor:
         """
         context = context or {}
         
-        execution = {
+        execution = self.backend.run(task.get("id"), task.get("instance"))
+        execution.update({
             "strategy": strategy.name,
             "task": task.get("name", task.get("id")),
-            "steps_executed": [],
+            "steps_executed": (
+                [{"action": "execute_reasoning"}] if execution["status"] == "completed" else []
+            ),
             "intermediate_results": [],
-            "final_result": None,
-            "success": False
-        }
-        
-        logger.info(f"Executing strategy '{strategy.name}' on task '{task.get('name')}'")
-        
-        # Execute each step
-        for step in strategy.steps:
-            step_result = self._execute_step(step, task, context, execution)
-            execution["steps_executed"].append(step)
-            execution["intermediate_results"].append(step_result)
-            
-            # Update context with step result
-            context[f"step_{step['step']}_result"] = step_result
-            
-        # Determine final result and success
-        execution["final_result"] = execution["intermediate_results"][-1] if execution["intermediate_results"] else None
-        execution["success"] = self._evaluate_success(execution, task)
+            "planned_steps": strategy.steps,
+            "final_result": execution.get("answer"),
+        })
         
         # Record execution
         self.execution_history.append(execution)
         
         logger.info(f"Strategy execution completed. Success: {execution['success']}")
         return execution
-        
-    def _execute_step(
-        self, 
-        step: Dict[str, Any], 
-        task: Dict[str, Any],
-        context: Dict[str, Any],
-        execution: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Execute a single strategy step"""
-        
-        step_result = {
-            "step_number": step["step"],
-            "action": step["action"],
-            "description": step.get("description", ""),
-            "output": None,
-            "status": "completed"
-        }
-        
-        # In a full implementation, this would actually execute the step
-        # For now, we'll simulate execution
-        step_result["output"] = f"Executed {step['action']}"
-        
-        logger.debug(f"Executed step {step['step']}: {step['action']}")
-        return step_result
-        
-    def _evaluate_success(self, execution: Dict[str, Any], task: Dict[str, Any]) -> bool:
-        """Evaluate whether strategy execution was successful"""
-        # Simplified success evaluation
-        # In practice, would compare results against task requirements
-        return len(execution["steps_executed"]) > 0 and all(
-            result.get("status") == "completed" 
-            for result in execution["intermediate_results"]
-        )
