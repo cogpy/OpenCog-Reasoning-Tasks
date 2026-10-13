@@ -8,13 +8,21 @@ import unittest
 from uuid import uuid4
 
 from opencog.curriculum import (
-    BENCHMARK_VERSION, CURRICULUM, CurriculumScheduler, SKILL_PREREQUISITES,
+    BENCHMARK_VERSION, CURRICULUM, CurriculumScheduler, SKILL_CAPABILITIES,
+    SKILL_PREREQUISITES,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
-CAPABILITIES = {"symbolic_evaluator", "rubric_evaluator", "latex_evaluator"}
+BACKEND_CAPABILITIES = {
+    "boolean_evaluation", "deterministic_rules", "knowledge_representation",
+    "planning", "recursion", "state_transitions",
+}
+CAPABILITIES = BACKEND_CAPABILITIES | {
+    capability for capabilities in SKILL_CAPABILITIES.values()
+    for capability in capabilities
+}
 TASK = "truth-table-completions"
 
 
@@ -52,7 +60,7 @@ class CurriculumTests(unittest.TestCase):
         self.assertEqual(len(CURRICULUM), 95)
         self.assertNotIn("truth-table-completion", CURRICULUM)
         required = {
-            "rank", "difficulty", "rationale", "skills", "prerequisites",
+            "rank", "order", "difficulty", "rationale", "skills", "prerequisites",
             "required_capabilities", "evaluator", "benchmark_version",
         }
         for entry in CURRICULUM.values():
@@ -60,6 +68,10 @@ class CurriculumTests(unittest.TestCase):
             self.assertTrue(entry["rationale"])
             self.assertTrue(entry["required_capabilities"])
             self.assertEqual(entry["benchmark_version"], BENCHMARK_VERSION)
+            self.assertEqual(entry["difficulty"], f"D{(entry['rank'] - 1) // 5 + 1}")
+            self.assertFalse(any(
+                capability.endswith("_evaluator") for capability in entry["required_capabilities"]
+            ))
             for skill in entry["skills"]:
                 self.assertEqual(entry["prerequisites"], list(SKILL_PREREQUISITES[skill]))
 
@@ -93,6 +105,9 @@ class CurriculumTests(unittest.TestCase):
         ]
         expected = {task: rank for rank, ids in enumerate(blocks, 1) for task in ids.split()}
         self.assertEqual({task: entry["rank"] for task, entry in CURRICULUM.items()}, expected)
+        for ids in blocks:
+            for order, task in enumerate(ids.split(), 1):
+                self.assertEqual(CURRICULUM[task]["order"], order)
 
     def test_dependency_chains_and_belief_scoping(self):
         expected = {
@@ -118,9 +133,30 @@ class CurriculumTests(unittest.TestCase):
     def test_no_capabilities_are_assumed(self):
         result = CurriculumScheduler().readiness(TASK)
         self.assertFalse(result["ready"])
-        self.assertEqual(result["missing_capabilities"], ["symbolic_evaluator"])
+        self.assertEqual(result["missing_capabilities"], ["boolean_evaluation"])
         self.assertTrue(self.scheduler.readiness(TASK)["ready"])
         self.assertFalse(self.scheduler.readiness("deductive-logic-puzzles")["ready"])
+
+    def test_real_backend_foundations_ready_and_unsupported_families_blocked(self):
+        implemented = {
+            "truth-table-completions", "syllogism-reasoning",
+            "towers-of-hanoi", "stack-based-reasoning",
+        }
+        scheduler = CurriculumScheduler(
+            available_capabilities=BACKEND_CAPABILITIES, supported_tasks=implemented,
+        )
+        self.assertTrue(scheduler.readiness(TASK)["ready"])
+        self.assertTrue(scheduler.readiness("syllogism-reasoning")["ready"])
+        self.assertFalse(scheduler.readiness("towers-of-hanoi")["ready"])
+        self.assertFalse(scheduler.readiness("constructing-valid-arguments")["supported"])
+        self.assertIn("not supported", scheduler.readiness(
+            "constructing-valid-arguments")["reason"])
+        unavailable = CurriculumScheduler(
+            available_capabilities=CAPABILITIES, supported_tasks=set(),
+        )
+        self.assertFalse(unavailable.readiness(TASK)["ready"])
+        with self.assertRaisesRegex(ValueError, "unknown supported"):
+            CurriculumScheduler(supported_tasks={"invented-task"})
 
     def test_practice_simulation_and_unevaluated_runs_never_certify(self):
         for split in ("practice", "simulated", "held_out"):
@@ -212,12 +248,50 @@ class CurriculumTests(unittest.TestCase):
         self.assertEqual(result["held_out_successes"], 18)
         self.assertFalse(result["mastered"])
 
+    def test_evaluated_failures_without_evidence_count_and_revoke(self):
+        certify(self.scheduler)
+        self.scheduler.record_attempt(
+            TASK, "held-0", validation(False, evidence=[]),
+            split="held_out", timestamp=START,
+        )
+        result = self.scheduler.mastery(TASK)
+        self.assertEqual(result["held_out_count"], 20)
+        self.assertEqual(result["accuracy"], 0.95)
+        self.assertTrue(result["mastered"])
+        self.scheduler.record_attempt(
+            TASK, "held-1", validation(False, evidence=[]),
+            split="held_out", timestamp=START,
+        )
+        result = self.scheduler.mastery(TASK)
+        self.assertEqual(result["held_out_count"], 20)
+        self.assertEqual(result["accuracy"], 0.90)
+        self.assertFalse(result["mastered"])
+        for split in ("transfer", "retention"):
+            with self.subTest(split=split):
+                scheduler = CurriculumScheduler(available_capabilities=CAPABILITIES)
+                certify(scheduler)
+                scheduler.record_attempt(
+                    TASK, f"{split}-failure", validation(False, evidence=[]),
+                    split=split, timestamp=START + timedelta(hours=26),
+                )
+                self.assertFalse(scheduler.mastery(TASK)["mastered"])
+
     def test_cross_split_instance_reuse_is_contamination(self):
         certify(self.scheduler)
         self.scheduler.record_attempt(
             TASK, "held-0", validation(), split="practice",
             timestamp=START + timedelta(hours=26),
         )
+        result = self.scheduler.mastery(TASK)
+        self.assertEqual(result["held_out_count"], 19)
+        self.assertFalse(result["mastered"])
+
+    def test_practice_instances_cannot_later_be_relabelled_held_out(self):
+        self.scheduler.record_attempt(
+            TASK, "held-0", validation(), split="practice",
+            timestamp=START - timedelta(days=1),
+        )
+        certify(self.scheduler)
         result = self.scheduler.mastery(TASK)
         self.assertEqual(result["held_out_count"], 19)
         self.assertFalse(result["mastered"])
@@ -340,15 +414,22 @@ class CurriculumTests(unittest.TestCase):
                 timestamp=START, benchmark_version="previous-benchmark",
             )
             self.scheduler.save(path)
-            restored = CurriculumScheduler.load(path)
+            restored = CurriculumScheduler(available_capabilities=CAPABILITIES)
+            self.assertIs(restored.load(path), restored)
             self.assertEqual(restored.attempts, self.scheduler.attempts)
             self.assertEqual(restored.mastery(TASK), self.scheduler.mastery(TASK))
             self.assertEqual(restored.recommend(), self.scheduler.recommend())
+            unavailable = CurriculumScheduler(supported_tasks=set())
+            unavailable.load(path)
+            self.assertEqual(unavailable.available_capabilities, set())
+            self.assertEqual(unavailable.supported_tasks, set())
+            self.assertFalse(unavailable.readiness("syllogism-reasoning")["ready"])
+            self.assertTrue(unavailable.mastery(TASK)["mastered"])
             data = json.loads(path.read_text(encoding="utf-8"))
             data["metadata"][TASK]["prerequisites"] = ["logic"]
             path.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "cyclic"):
-                CurriculumScheduler.load(path)
+                restored.load(path)
         finally:
             path.unlink(missing_ok=True)
 

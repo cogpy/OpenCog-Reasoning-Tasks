@@ -9,6 +9,7 @@ import os
 import json
 import logging
 import hashlib
+from uuid import uuid4
 from copy import deepcopy
 from dataclasses import replace
 from typing import Dict, List, Any, Optional
@@ -115,6 +116,9 @@ class OpenCogWorkbench:
             required_capabilities=metadata.get("required_capabilities", []),
             curriculum=metadata,
             source=str(definition.get("source", "")),
+            raw_content=definition.get("raw_content", ""),
+            catalog_metadata=definition.get("metadata", {}),
+            catalog_warnings=definition.get("warnings", []),
             audit_issues=definition.get("audit_issues", [])
         )
         
@@ -137,6 +141,13 @@ class OpenCogWorkbench:
         """
         if task_id not in self.tasks:
             raise ValueError(f"Task {task_id} not found")
+        if orchestration_mode not in {"autonomous", "collaborative", "guided"}:
+            raise ValueError(f"Unknown orchestration mode: {orchestration_mode}")
+        if instance is not None:
+            try:
+                self._instance_id(instance)
+            except (TypeError, ValueError) as error:
+                raise ValueError("instance must contain finite JSON-serializable data") from error
             
         task = replace(self.tasks[task_id], instance=deepcopy(instance))
         logger.info(f"Starting to solve task: {task.name}")
@@ -183,7 +194,7 @@ class OpenCogWorkbench:
         logger.info(f"Solving task '{task.name}' with multi-agent collaboration")
         
         # Create orchestration session
-        session_id = f"task_{task.id}_session"
+        session_id = f"task_{task.id}_{uuid4().hex}"
         agent_ids = list(self.agent_zero.agents.keys())
         self.orchestrator.create_session(session_id, agent_ids)
         
@@ -199,7 +210,10 @@ class OpenCogWorkbench:
              self.agent_zero.learn_from_execution(task, context["execution"], context["validation"]))
         ]
         try:
-            pipeline = self.orchestrator.run_pipeline(session_id, task.to_dict(), stages)
+            session_task = task.to_dict()
+            session_task["id"] = session_id
+            session_task["family_id"] = task.id
+            pipeline = self.orchestrator.run_pipeline(session_id, session_task, stages)
         finally:
             self.orchestrator.close_session(session_id)
         context = pipeline["context"]
@@ -361,7 +375,10 @@ class OpenCogWorkbench:
                 "by_type": self._count_strategies_by_type()
             },
             "performance": {
-                "executions": len(self.strategy_executor.execution_history),
+                "executions": len(self.agent_zero.performance_history) + sum(
+                    bool(execution.get("validation", {}).get("evaluated"))
+                    for execution in self.strategy_executor.execution_history
+                ),
                 "avg_success_rate": self._calculate_avg_success_rate()
             }
         }
@@ -399,10 +416,11 @@ class OpenCogWorkbench:
         """Independently evaluate an answer; caller-declared splits are not certified benchmarks."""
         if task_id not in self.tasks:
             raise ValueError(f"Task {task_id} not found")
+        instance_id = self._instance_id(instance)
         validation = self.backend.validate(task_id, instance, answer)
         if validation.get("evaluated") and task_id in CURRICULUM:
             self.scheduler.record_attempt(
-                task_id, self._instance_id(instance), validation,
+                task_id, instance_id, validation,
                 split=split, transfer=transfer
             )
         return validation
@@ -498,7 +516,11 @@ class OpenCogWorkbench:
         
     def _calculate_avg_success_rate(self) -> float:
         """Calculate average success rate across all executions"""
-        if not self.strategy_executor.execution_history:
+        records = self.agent_zero.performance_history + [
+            execution for execution in self.strategy_executor.execution_history
+            if execution.get("validation", {}).get("evaluated")
+        ]
+        if not records:
             return 0.0
-        successes = sum(1 for e in self.strategy_executor.execution_history if e["success"])
-        return successes / len(self.strategy_executor.execution_history)
+        successes = sum(bool(record["success"]) for record in records)
+        return successes / len(records)

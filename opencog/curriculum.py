@@ -142,11 +142,54 @@ _SKILL_OVERRIDES = {
     "ethical-dilemma-resolution": "policy_ethics",
 }
 
+_IMPLEMENTED_CAPABILITIES = {
+    "truth-table-completions": ["boolean_evaluation"],
+    "syllogism-reasoning": ["deterministic_rules", "knowledge_representation"],
+    "towers-of-hanoi": ["planning", "recursion", "state_transitions"],
+    "stack-based-reasoning": ["planning"],
+}
+
+SKILL_CAPABILITIES = {
+    "logic": ("deterministic_rules", "knowledge_representation"),
+    "relations": ("knowledge_representation", "relation_mapping"),
+    "temporal": ("temporal_reasoning", "state_transitions"),
+    "numeracy": ("arithmetic", "equation_solving"),
+    "probability": ("probability_calculation",),
+    "induction": ("pattern_induction", "knowledge_representation"),
+    "constraints": ("deterministic_rules", "constraint_solving"),
+    "planning": ("planning", "recursion", "state_transitions"),
+    "spatial": ("spatial_reasoning",),
+    "analogy": ("relation_mapping", "cross_domain_mapping"),
+    "language": ("language_parsing", "ambiguity_resolution"),
+    "evidence": ("evidence_tracking", "source_evaluation"),
+    "uncertainty": ("probability_calculation", "uncertainty_estimation"),
+    "causal": ("causal_modeling", "evidence_tracking"),
+    "counterfactual": ("causal_modeling", "counterfactual_simulation"),
+    "decisions": ("planning", "decision_analysis", "uncertainty_estimation"),
+    "behavior": ("behavior_modeling", "evidence_tracking"),
+    "scoped_beliefs": ("scoped_belief_tracking", "temporal_reasoning"),
+    "perspective": ("scoped_belief_tracking", "perspective_modeling"),
+    "first_order_belief": ("scoped_belief_tracking", "first_order_belief_reasoning"),
+    "second_order_belief": ("scoped_belief_tracking", "second_order_belief_reasoning"),
+    "higher_order_belief": ("scoped_belief_tracking", "higher_order_belief_reasoning"),
+    "pragmatics": ("language_parsing", "pragmatic_interpretation", "social_context"),
+    "bias": ("language_parsing", "bias_assessment", "evidence_tracking"),
+    "creative": ("generative_reasoning", "cross_domain_mapping"),
+    "legal": ("language_parsing", "legal_analysis", "evidence_tracking"),
+    "forecast": ("probabilistic_forecasting", "causal_modeling"),
+    "policy_ethics": (
+        "ethical_tradeoffs", "policy_analysis", "planning", "causal_modeling",
+        "perspective_modeling",
+    ),
+    "paradoxes": ("deterministic_rules", "self_reference_analysis"),
+    "multiturn_latex": ("multiturn_state", "latex_rendering"),
+}
+
 
 def _build_curriculum():
     result = {}
     for rank, (group_skill, task_ids) in enumerate(_BLOCKS, 1):
-        for task_id in task_ids:
+        for order, task_id in enumerate(task_ids, 1):
             skill = _SKILL_OVERRIDES.get(task_id, group_skill)
             prerequisites = SKILL_PREREQUISITES[skill]
             evaluator = (
@@ -159,8 +202,8 @@ def _build_curriculum():
             )
             result[task_id] = {
                 "rank": rank,
-                "difficulty": "introductory" if rank <= 5 else (
-                    "intermediate" if rank <= 16 else "advanced"),
+                "order": order,
+                "difficulty": f"D{(rank - 1) // 5 + 1}",
                 "rationale": (
                     f"Block {rank} develops {skill.replace('_', ' ')}; "
                     + ("requires mastery of " + ", ".join(prerequisites)
@@ -169,7 +212,9 @@ def _build_curriculum():
                 ),
                 "skills": [skill],
                 "prerequisites": list(prerequisites),
-                "required_capabilities": [evaluator],
+                "required_capabilities": list(
+                    _IMPLEMENTED_CAPABILITIES.get(task_id, SKILL_CAPABILITIES[skill])
+                ),
                 "evaluator": evaluator,
                 "benchmark_version": BENCHMARK_VERSION,
             }
@@ -200,8 +245,9 @@ class CurriculumScheduler:
 
     ``metadata`` is a complete task-ID mapping with the same schema as
     ``CURRICULUM``. Prerequisites are skill IDs; all providers of a skill must
-    be mastered. Capability IDs denote available evaluator implementations,
-    not aspirational agent labels. No capabilities are assumed by default.
+    be     mastered. Capability IDs denote available implementations, not aspirational
+    agent labels. No capabilities are assumed by default. ``supported_tasks``
+    optionally restricts readiness to explicitly implemented task families.
 
     Eligible splits are ``held_out``, ``transfer`` and ``retention``. ``practice``
     and ``simulated`` are logged but cannot certify mastery. Instance IDs are
@@ -210,14 +256,21 @@ class CurriculumScheduler:
     versions never pool evidence, nor do benchmark versions.
     """
 
-    def __init__(self, metadata=None, available_capabilities=None):
+    def __init__(self, metadata=None, available_capabilities=None, supported_tasks=None):
         self.metadata = deepcopy(CURRICULUM if metadata is None else metadata)
         if isinstance(available_capabilities, str):
             raise ValueError("available_capabilities must be a collection, not a string")
         self.available_capabilities = set(available_capabilities or ())
+        if isinstance(supported_tasks, str):
+            raise ValueError("supported_tasks must be a collection, not a string")
+        self.supported_tasks = None if supported_tasks is None else set(supported_tasks)
         self.attempts = []
         self._providers = {}
         self._validate_metadata()
+        if self.supported_tasks is not None:
+            unknown = self.supported_tasks - set(self.metadata)
+            if unknown:
+                raise ValueError("unknown supported task IDs: " + ", ".join(sorted(unknown)))
 
     def _validate_metadata(self):
         required = set(next(iter(CURRICULUM.values())))
@@ -228,6 +281,8 @@ class CurriculumScheduler:
                 raise ValueError(f"incomplete curriculum metadata: {task_id}")
             if not isinstance(entry["rank"], int) or entry["rank"] < 1:
                 raise ValueError(f"invalid rank: {task_id}")
+            if not isinstance(entry["order"], int) or entry["order"] < 1:
+                raise ValueError(f"invalid within-block order: {task_id}")
             for key in ("skills", "prerequisites", "required_capabilities"):
                 values = entry[key]
                 if not isinstance(values, (list, tuple)) or any(
@@ -313,7 +368,9 @@ class CurriculumScheduler:
         return (
             attempt["split"] in {"held_out", "transfer", "retention"}
             and validation["evaluated"]
-            and bool(validation["evidence"])
+            # Missing positive evidence cannot certify success. Evaluated
+            # failures still count, so omission cannot inflate accuracy.
+            and (bool(validation["evidence"]) or not validation["success"])
             and bool(validation["evaluator_version"].strip())
             and not validation.get("simulated", False)
         )
@@ -407,15 +464,20 @@ class CurriculumScheduler:
             set(entry["required_capabilities"]) - self.available_capabilities
         )
         mastered = self.mastery(task_id)["mastered"]
-        ready = not missing_skills and not missing_capabilities
+        supported = self.supported_tasks is None or task_id in self.supported_tasks
+        ready = supported and not missing_skills and not missing_capabilities
         reasons = []
+        if not supported:
+            reasons.append("task family is not supported by an available backend")
         if missing_skills:
             reasons.append("unmastered prerequisite skills: " + ", ".join(missing_skills))
         if missing_capabilities:
             reasons.append("unavailable capabilities: " + ", ".join(missing_capabilities))
         return {
             "task_id": task_id, "ready": ready, "mastered": mastered,
+            "supported": supported,
             "rank": entry["rank"], "difficulty": entry["difficulty"],
+            "order": entry["order"],
             "missing_prerequisites": missing_skills,
             "missing_capabilities": missing_capabilities,
             "reason": "; ".join(reasons) if reasons else (
@@ -428,7 +490,9 @@ class CurriculumScheduler:
             raise ValueError("limit must be a nonnegative integer")
         recommendations = [self.readiness(task_id) for task_id in sorted(self.metadata)]
         recommendations = [item for item in recommendations if not item["mastered"]]
-        recommendations.sort(key=lambda item: (not item["ready"], item["rank"], item["task_id"]))
+        recommendations.sort(key=lambda item: (
+            not item["ready"], item["rank"], item["order"], item["task_id"],
+        ))
         return recommendations[:limit]
 
     def save(self, path):
@@ -436,18 +500,26 @@ class CurriculumScheduler:
         data = {
             "schema_version": 1, "metadata": self.metadata,
             "available_capabilities": sorted(self.available_capabilities),
+            "supported_tasks": (
+                sorted(self.supported_tasks) if self.supported_tasks is not None else None
+            ),
             "attempts": self.attempts,
         }
         Path(path).write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False),
                               encoding="utf-8")
 
-    @classmethod
-    def load(cls, path):
-        """Restore and validate a saved scheduler without trusting mastery flags."""
+    def load(self, path):
+        """Restore evidence in place while retaining actual runtime capabilities.
+
+        Saved capability and supported-family declarations are audit information,
+        never authorization to enable an implementation in the current process.
+        """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if data.get("schema_version") != 1:
             raise ValueError("unsupported curriculum ledger schema")
-        result = cls(data["metadata"], data["available_capabilities"])
+        result = type(self)(
+            data["metadata"], self.available_capabilities, self.supported_tasks,
+        )
         for attempt in data["attempts"]:
             entry = result._entry(attempt["task_id"])
             if attempt["evaluator"] != entry["evaluator"]:
@@ -459,4 +531,7 @@ class CurriculumScheduler:
                 split=attempt["split"], timestamp=attempt["timestamp"],
                 benchmark_version=attempt["benchmark_version"],
             )
-        return result
+        self.metadata = result.metadata
+        self._providers = result._providers
+        self.attempts = result.attempts
+        return self

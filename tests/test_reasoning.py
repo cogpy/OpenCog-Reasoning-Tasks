@@ -82,6 +82,8 @@ class ReasoningTests(unittest.TestCase):
                 validation = self.backend.validate("truth-table-completions", instance, answer)
                 self.assertTrue(validation["evaluated"])
                 self.assertFalse(validation["success"])
+                self.assertTrue(validation["evidence"])
+                self.assertEqual(validation["evidence"][0]["outcome"], "failed")
 
     def test_expression_invalid_and_bounded(self):
         for expression in ["", "P AND", "(P", "P Q", "P)", "__import__('os')",
@@ -266,6 +268,26 @@ class ReasoningTests(unittest.TestCase):
             self.assertEqual(validation["validation_status"], status)
             self.assertFalse(result["success"])
             self.assertFalse(result["validation"]["evaluated"])
+
+    def test_every_evaluated_failure_has_independent_evidence(self):
+        cases = [
+            ("truth-table-completions", {"expression": "P"}, {"rows": []}),
+            ("syllogism-reasoning", {"premises": [], "query": statement("all", "a", "b")},
+             {"entailed": True, "contradicted": False, "consistent": True}),
+            ("towers-of-hanoi", {"disks": 2}, {"moves": []}),
+            ("stack-based-reasoning", {"steps": ["first", "second"]},
+             {"pop_order": ["first", "second"]}),
+        ]
+        for task_id, instance, answer in cases:
+            with self.subTest(task_id=task_id):
+                result = self.backend.validate(task_id, instance, answer)
+                self.assertTrue(result["evaluated"])
+                self.assertFalse(result["success"])
+                self.assertEqual(result["validation_status"], "failed")
+                self.assertTrue(result["evaluator_version"])
+                self.assertTrue(result["issues"])
+                self.assertEqual(result["evidence"][0]["outcome"], "failed")
+                self.assertIn("method", result["evidence"][0])
 
 
 if __name__ == "__main__":

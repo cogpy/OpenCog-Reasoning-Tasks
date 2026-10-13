@@ -37,6 +37,25 @@ handlers in an ordered, message-traced pipeline. This is synchronous coordinatio
 not distributed execution or evidence that multiple agents improve performance.
 Strategy templates remain plans, not implementations of their named actions.
 
+Supported instance schemas:
+
+| Task ID | Input | Answer |
+|---|---|---|
+| `truth-table-completions` | `expression`, optional exact `variables` list | `variables`, and `rows` containing Boolean `assignment`/`value` |
+| `syllogism-reasoning` | `premises` list and `query`, each with `kind`, `subject`, `predicate` | Boolean `entailed`, `contradicted`, `consistent` |
+| `towers-of-hanoi` | Positive integer `disks`, optional distinct `source`, `target`, `auxiliary` names | `moves`, each with `from`/`to` |
+| `stack-based-reasoning` | String list `steps` in **push order** | `pop_order` in reverse order |
+
+Boolean expressions support NOT, AND, OR, XOR, IMPLIES, IFF and parentheses,
+with at most eight variables and bounded expression size/depth. Syllogism kinds
+are `all`, `no`, `some`, `some_not`, `is`, `is_not`; `is`/`is_not` subjects are
+named individuals. At most four predicates, two individuals, and 32 premises
+are supported. Universals have no existential import, and inconsistent premises
+do not entail arbitrary conclusions. Hanoi is limited to ten disks; stack inputs
+are limited to 1024 steps of at most 1024 characters. Inputs exceeding these
+bounds are unsupported rather than attempted without a budget. Free-form
+natural-language descriptions are not automatically converted to these schemas.
+
 `evaluate_instance(task_id, instance, answer, split="practice", transfer=False)`
 checks submitted answers independently. Routine solving records practice only.
 Caller-declared held-out/retention splits are research bookkeeping, not certified

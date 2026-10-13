@@ -60,6 +60,9 @@ class Task:
     required_capabilities: List[str] = field(default_factory=list)
     curriculum: Dict[str, Any] = field(default_factory=dict)
     source: str = ""
+    raw_content: str = ""
+    catalog_metadata: Dict[str, Any] = field(default_factory=dict)
+    catalog_warnings: List[str] = field(default_factory=list)
     audit_issues: List[Any] = field(default_factory=list)
     instance: Optional[Dict[str, Any]] = None
 

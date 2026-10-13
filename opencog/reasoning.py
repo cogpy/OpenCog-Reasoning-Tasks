@@ -378,20 +378,23 @@ class ReasoningBackend:
                           issues=[str(error)])
             return result
         result["evaluated"] = True
+        method = {
+            "truth-table-completions": "recursive truth-function checker",
+            "syllogism-reasoning": "exhaustive finite unary model checker",
+            "towers-of-hanoi": "legal move replay, goal and minimum-length checks",
+            "stack-based-reasoning": "stack push/pop replay",
+        }[task_id]
         try:
             if task_id == "truth-table-completions":
                 self._validate_truth(data, answer)
-                method = "recursive truth-function checker"
             elif task_id == "syllogism-reasoning":
                 if (not isinstance(answer, dict) or set(answer) != {"entailed", "contradicted", "consistent"}
                         or any(type(value) is not bool for value in answer.values())):
                     raise _Invalid("answer requires exactly three boolean conclusions")
                 if answer != _model_check(data):
                     raise _Invalid("conclusions disagree with finite models")
-                method = "exhaustive finite unary model checker"
             elif task_id == "towers-of-hanoi":
                 self._validate_hanoi(data, answer)
-                method = "legal move replay, goal and minimum-length checks"
             else:
                 if (not isinstance(answer, dict) or set(answer) != {"pop_order"} or
                         not isinstance(answer["pop_order"], list) or
@@ -404,11 +407,12 @@ class ReasoningBackend:
                         raise _Invalid("incorrect stack pop order")
                 if stack:
                     raise _Invalid("missing stack pops")
-                method = "stack push/pop replay"
             result.update(validation_status="passed", success=True, quality_score=1.0,
-                          evidence=[{"method": method}])
+                          evidence=[{"method": method, "outcome": "passed"}])
         except (ValueError, TypeError, KeyError, IndexError) as error:
             result["issues"] = [str(error)]
+            result["evidence"] = [{"method": method, "outcome": "failed",
+                                   "issues": list(result["issues"])}]
         except Exception:
             result.update(evaluated=False, issues=["independent evaluator failed"])
         return result

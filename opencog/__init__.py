@@ -10,6 +10,8 @@ from .agents.agent_zero import AgentZero, Agent, Task, AgentRole
 from .patterns.pattern_library import PatternLanguageLibrary, CognitivePattern, PatternCategory
 from .orchestration.multi_agent import Orchestrator, AgentCoordinator
 from .strategies.strategy_system import StrategyRepository, Strategy, StrategyExecutor
+from .curriculum import CURRICULUM, CurriculumScheduler
+from .reasoning import ReasoningBackend
 
 __version__ = "1.0.0"
 __all__ = [
@@ -25,5 +27,8 @@ __all__ = [
     "AgentCoordinator",
     "StrategyRepository",
     "Strategy",
-    "StrategyExecutor"
+    "StrategyExecutor",
+    "CURRICULUM",
+    "CurriculumScheduler",
+    "ReasoningBackend"
 ]

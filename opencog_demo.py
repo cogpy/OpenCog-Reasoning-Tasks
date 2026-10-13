@@ -211,8 +211,10 @@ def demo_pattern_evolution(workbench):
     print("DEMO 6: Pattern Evolution and Learning")
     print("="*80 + "\n")
     
-    # Record some pattern uses
-    pattern = workbench.pattern_library.get_pattern("decomposition_pattern")
+    # Keep illustrative counters separate from evaluated workbench performance.
+    from opencog.patterns.pattern_library import PatternLanguageLibrary
+    demo_library = PatternLanguageLibrary()
+    pattern = demo_library.get_pattern("decomposition_pattern")
     
     if pattern:
         print(f"Pattern: {pattern.name}")
@@ -222,10 +224,10 @@ def demo_pattern_evolution(workbench):
         print(f"  Quality: {pattern.quality.value}")
         
         # Simulate pattern uses
-        print("\nSimulating pattern uses...")
+        print("\nSimulating isolated pattern uses (not mastery evidence)...")
         for i in range(10):
             success = i % 4 != 0  # 75% success rate
-            workbench.pattern_library.record_pattern_use(pattern.id, success)
+            demo_library.record_pattern_use(pattern.id, success)
             
         print(f"\nAfter 10 uses:")
         print(f"  Use count: {pattern.use_count}")
@@ -237,7 +239,7 @@ def demo_pattern_evolution(workbench):
             "task": "Complex system analysis",
             "application": "Decomposed system into components, analyzed each, then integrated findings"
         }
-        workbench.pattern_library.evolve_pattern(pattern.id, new_example)
+        demo_library.evolve_pattern(pattern.id, new_example)
         print(f"\nAdded new example to pattern. Total examples: {len(pattern.examples)}")
 
 

@@ -21,6 +21,8 @@ class WorkbenchTests(unittest.TestCase):
         self.assertTrue(latex.description)
         self.assertTrue(latex.examples)
         self.assertTrue(latex.source)
+        self.assertEqual((ROOT / "tasks" / "multiturn-latex-generation.md").read_text(),
+                         latex.raw_content)
         self.assertEqual(24, len(self.workbench.tasks["syllogism-reasoning"].examples))
 
     def test_no_instance_does_not_report_mastery(self):
@@ -39,6 +41,8 @@ class WorkbenchTests(unittest.TestCase):
         self.assertTrue(collaborative["success"])
         self.assertEqual(autonomous["answer"], collaborative["answer"])
         self.assertEqual(5, len(collaborative["execution_trace"]))
+        self.assertEqual(2, self.workbench.get_statistics()["performance"]["executions"])
+        self.assertEqual(1.0, self.workbench.get_statistics()["performance"]["avg_success_rate"])
         self.assertEqual(0, self.workbench.orchestrator.coordinator.monitor_progress()["active_tasks"])
         self.assertTrue(all(
             load == 0 for load in self.workbench.orchestrator.coordinator.agent_load.values()
@@ -128,6 +132,10 @@ class WorkbenchTests(unittest.TestCase):
             self.workbench.solve_task("truth-table-completions", "not-a-mode")
         with self.assertRaises(ValueError):
             self.workbench.solve_task("missing")
+        with self.assertRaises(ValueError):
+            self.workbench.solve_task(
+                "truth-table-completions", instance={"expression": "P", "extra": float("nan")}
+            )
 
 
 if __name__ == "__main__":
