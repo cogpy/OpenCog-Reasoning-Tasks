@@ -17,6 +17,12 @@ BENCHMARK_VERSION = "reasoning-curriculum-v1"
 MIN_HELD_OUT = 20
 MASTERY_THRESHOLD = 0.95
 RETENTION_DELAY = timedelta(hours=24)
+REVIEW_INTERVAL = timedelta(days=7)
+_DIFFICULTIES = (
+    "D1–D2", "D1–D2", "D2", "D2–D3", "D2–D3", "D3", "D3", "D3", "D3",
+    "D3–D4", "D3–D4", "D3–D4", "D4", "D4", "D4", "D4", "D4",
+    "D4–D5", "D4–D5", "D4–D5", "D4–D5", "D5", "D5", "D5", "D4–D5",
+)
 
 # Every skill is provided by the task families explicitly assigned below.
 # Mastering one provider never substitutes for mastering all the others.
@@ -203,7 +209,7 @@ def _build_curriculum():
             result[task_id] = {
                 "rank": rank,
                 "order": order,
-                "difficulty": f"D{(rank - 1) // 5 + 1}",
+                "difficulty": _DIFFICULTIES[rank - 1],
                 "rationale": (
                     f"Block {rank} develops {skill.replace('_', ' ')}; "
                     + ("requires mastery of " + ", ".join(prerequisites)
@@ -256,7 +262,8 @@ class CurriculumScheduler:
     versions never pool evidence, nor do benchmark versions.
     """
 
-    def __init__(self, metadata=None, available_capabilities=None, supported_tasks=None):
+    def __init__(self, metadata=None, available_capabilities=None, supported_tasks=None,
+                 clock=None):
         self.metadata = deepcopy(CURRICULUM if metadata is None else metadata)
         if isinstance(available_capabilities, str):
             raise ValueError("available_capabilities must be a collection, not a string")
@@ -264,6 +271,9 @@ class CurriculumScheduler:
         if isinstance(supported_tasks, str):
             raise ValueError("supported_tasks must be a collection, not a string")
         self.supported_tasks = None if supported_tasks is None else set(supported_tasks)
+        self._clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
+        if not callable(self._clock):
+            raise ValueError("clock must be callable")
         self.attempts = []
         self._providers = {}
         self._validate_metadata()
@@ -353,7 +363,7 @@ class CurriculumScheduler:
         attempt = {
             "task_id": task_id, "instance_id": instance_id, "split": split,
             "transfer": split == "transfer",
-            "timestamp": _timestamp(timestamp).isoformat(),
+            "timestamp": _timestamp(self._clock() if timestamp is None else timestamp).isoformat(),
             "benchmark_version": version, "evaluator": entry["evaluator"],
             "validation": deepcopy(validation),
         }
@@ -440,6 +450,9 @@ class CurriculumScheduler:
             "accuracy": accuracy, "threshold": MASTERY_THRESHOLD,
             "minimum_instances": MIN_HELD_OUT, "transfer_passed": transferred,
             "retention_passed": retained, "benchmark_version": entry["benchmark_version"],
+            "last_retention_at": (
+                retention_pair[1]["timestamp"] if retained else None
+            ),
             "evaluator": entry["evaluator"], "evaluator_version": evaluator_version,
             "uncertainty": {"method": "wilson_95", "accuracy_interval": interval},
             "attempt_count": len(attempts),
@@ -484,14 +497,104 @@ class CurriculumScheduler:
                 "mastery certified" if mastered else "prerequisites and capabilities available"),
         }
 
-    def recommend(self, limit=10):
-        """Return unmastered tasks, ready first, then rank and stable task ID."""
+    def recommend(self, limit=10, *, now=None):
+        """Rank ready learning opportunities and due seven-day retention reviews.
+
+        Priority is an instructional heuristic: practice errors, downstream
+        dependencies, observed evidence coverage, and capability reuse/cost.
+        ``clock`` or ``now`` can inject time without changing persisted evidence.
+        """
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
             raise ValueError("limit must be a nonnegative integer")
-        recommendations = [self.readiness(task_id) for task_id in sorted(self.metadata)]
-        recommendations = [item for item in recommendations if not item["mastered"]]
+        current_time = _timestamp(self._clock() if now is None else now)
+        ready = [self.readiness(task_id) for task_id in sorted(self.metadata)]
+        ready = [item for item in ready if item["ready"]]
+        recommendations = []
+        for item in ready:
+            task_id = item["task_id"]
+            entry = self._entry(task_id)
+            mastery = self.mastery(task_id)
+            last_retention = mastery["last_retention_at"]
+            review_due_at = (
+                _timestamp(last_retention) + REVIEW_INTERVAL if last_retention else None
+            )
+            review_due = bool(review_due_at and current_time >= review_due_at)
+            if item["mastered"] and not review_due:
+                continue
+            attempts = [
+                attempt for attempt in self.attempts
+                if attempt["task_id"] == task_id
+                and attempt["benchmark_version"] == entry["benchmark_version"]
+                and attempt["evaluator"] == entry["evaluator"]
+                and not attempt["validation"].get("simulated", False)
+                and attempt["split"] != "simulated"
+            ]
+            evaluated = [
+                attempt for attempt in attempts
+                if attempt["validation"]["evaluated"]
+                and attempt["validation"]["evaluator_version"].strip()
+            ]
+            # Do not pool practice-error rates across evaluator versions.
+            version = (
+                max(enumerate(evaluated), key=lambda pair: (
+                    _timestamp(pair[1]["timestamp"]), pair[0]
+                ))[1]["validation"]["evaluator_version"] if evaluated else None
+            )
+            evaluated = [
+                attempt for attempt in evaluated
+                if attempt["validation"]["evaluator_version"] == version
+            ]
+            practice = {}
+            for index, attempt in enumerate(evaluated):
+                if attempt["split"] != "practice":
+                    continue
+                key = attempt["instance_id"]
+                ordering = (_timestamp(attempt["timestamp"]), index)
+                if key not in practice or ordering > practice[key][0]:
+                    practice[key] = (ordering, attempt["validation"]["success"])
+            error_rate = (
+                sum(not success for _, success in practice.values()) / len(practice)
+                if practice else 0.0
+            )
+            benefit = sum(
+                1 / len(self._providers[skill])
+                for skill in set(entry["skills"])
+                for dependent in self.metadata.values()
+                if skill in dependent["prerequisites"]
+            )
+            reliability = (
+                sum(bool(attempt["validation"]["evidence"]) for attempt in evaluated)
+                / len(evaluated) if evaluated else 0.0
+            )
+            capabilities = set(entry["required_capabilities"])
+            cost = len(capabilities)
+            reuse = sum(
+                len(capabilities & set(self.metadata[other["task_id"]]["required_capabilities"]))
+                for other in ready if other["task_id"] != task_id
+            ) / max(1, len(ready) - 1)
+            priority = round(
+                4 * error_rate + benefit + reliability + 0.25 * reuse
+                - 0.25 * cost + (3 if review_due else 0), 6,
+            )
+            item.update({
+                "priority": priority,
+                "action": "retention_review" if review_due else "practice",
+                "practice_error_rate": error_rate,
+                "downstream_unlock_benefit": benefit,
+                "verification_reliability": reliability,
+                "capability_reuse": reuse, "capability_cost": cost,
+                "review_due_at": review_due_at.isoformat() if review_due_at else None,
+                "reason": (
+                    ("seven-day retention review due; " if review_due else "")
+                    + f"practice error rate {error_rate:.0%}; "
+                    f"downstream benefit {benefit:.2f}; "
+                    f"observed evidence coverage {reliability:.0%}; "
+                    f"capability reuse {reuse:.2f}, cost {cost}"
+                ),
+            })
+            recommendations.append(item)
         recommendations.sort(key=lambda item: (
-            not item["ready"], item["rank"], item["order"], item["task_id"],
+            -item["priority"], item["rank"], item["order"], item["task_id"],
         ))
         return recommendations[:limit]
 
@@ -511,19 +614,21 @@ class CurriculumScheduler:
     def load(self, path):
         """Restore evidence in place while retaining actual runtime capabilities.
 
-        Saved capability and supported-family declarations are audit information,
-        never authorization to enable an implementation in the current process.
+        Saved metadata and capability declarations are audit information, never
+        authorization to roll back a benchmark or enable an implementation.
         """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if data.get("schema_version") != 1:
             raise ValueError("unsupported curriculum ledger schema")
+        # Check the saved schema/DAG, but use the current curriculum policy.
+        type(self)(data["metadata"])
         result = type(self)(
-            data["metadata"], self.available_capabilities, self.supported_tasks,
+            self.metadata, self.available_capabilities, self.supported_tasks,
+            clock=self._clock,
         )
         for attempt in data["attempts"]:
-            entry = result._entry(attempt["task_id"])
-            if attempt["evaluator"] != entry["evaluator"]:
-                raise ValueError("saved attempt evaluator does not match metadata")
+            if not isinstance(attempt["evaluator"], str) or not attempt["evaluator"]:
+                raise ValueError("saved attempt must identify its original evaluator")
             if attempt["transfer"] != (attempt["split"] == "transfer"):
                 raise ValueError("saved attempt transfer flag does not match split")
             result.record_attempt(
@@ -531,6 +636,8 @@ class CurriculumScheduler:
                 split=attempt["split"], timestamp=attempt["timestamp"],
                 benchmark_version=attempt["benchmark_version"],
             )
+            # Preserve historical evaluator identity; never relabel old evidence.
+            result.attempts[-1]["evaluator"] = attempt["evaluator"]
         self.metadata = result.metadata
         self._providers = result._providers
         self.attempts = result.attempts

@@ -77,6 +77,11 @@ future integrations. This package does not claim those capabilities and does not
 execute or compile generated documents. Native Python bindings require resolving
 the shared `opencog` package name before integration.
 
+`OpenCogWorkbench(..., backend=adapter)` accepts an alternative implementation of
+the `ReasoningBackend` interface (`execute`, `validate`, `run`, `supported_tasks`,
+`available_capabilities`). An adapter must supply actual independent evaluation;
+declaring capabilities alone does not demonstrate mastery.
+
 Run the standard-library regression suite from the repository root:
 
 ```bash
@@ -220,7 +225,7 @@ Inspired by Christopher Alexander's architectural patterns, our pattern language
 Main interface for the system.
 
 ```python
-workbench = OpenCogWorkbench(tasks_dir=None, patterns_path=None)
+workbench = OpenCogWorkbench(tasks_dir=None, patterns_path=None, backend=None)
 ```
 
 **Methods:**

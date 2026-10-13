@@ -41,16 +41,17 @@ class OpenCogWorkbench:
     - Reasoning task management
     """
     
-    def __init__(self, tasks_dir: str = None, patterns_path: str = None):
+    def __init__(self, tasks_dir: str = None, patterns_path: str = None, backend=None):
         """
         Initialize the OpenCog workbench
         
         Args:
             tasks_dir: Directory containing reasoning tasks (markdown files)
             patterns_path: Path to save/load pattern library
+            backend: Optional executor/evaluator implementing the ReasoningBackend interface
         """
         # Initialize core components
-        self.backend = ReasoningBackend()
+        self.backend = backend if backend is not None else ReasoningBackend()
         self.agent_zero = AgentZero(backend=self.backend)
         self.pattern_library = PatternLanguageLibrary(library_path=patterns_path)
         self.orchestrator = Orchestrator()
@@ -185,7 +186,7 @@ class OpenCogWorkbench:
             "confidence": result["results"].get("confidence"),
             "resource_usage": result["results"].get("resource_usage", {}),
             "errors": result["results"].get("errors", []),
-            "patterns_used": result["analysis"].get("required_patterns", []),
+            "patterns_used": result["results"].get("patterns_used", []),
             "success": result["validation"]["validation_status"] == "passed"
         }
         
@@ -224,7 +225,7 @@ class OpenCogWorkbench:
             "execution": execution, "execution_trace": pipeline["execution_trace"],
             "status": execution["status"], "answer": execution.get("answer"),
             "validation": validation, "success": validation.get("success", False),
-            "patterns_used": context["analysis"]["required_patterns"],
+            "patterns_used": execution.get("patterns_used", []),
             "evidence": execution.get("evidence", []),
             "confidence": execution.get("confidence"),
             "resource_usage": execution.get("resource_usage", {}),

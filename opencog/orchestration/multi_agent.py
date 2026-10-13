@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+from copy import deepcopy
 
 
 logger = logging.getLogger(__name__)
@@ -418,7 +419,7 @@ class Orchestrator:
         for agent_id, _, _ in stages:
             if agent_id not in session["agents"]:
                 raise ValueError(f"Agent {agent_id} is not in the session")
-        context = {"task": task}
+        context = {"task": deepcopy(task)}
         trace = []
         session["tasks"].append(task["id"])
         self.coordinator.task_queue.add_task(task)

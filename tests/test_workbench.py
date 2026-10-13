@@ -47,6 +47,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertTrue(all(
             load == 0 for load in self.workbench.orchestrator.coordinator.agent_load.values()
         ))
+        json.dumps(self.workbench.orchestrator.coordinator.task_queue.completed_tasks)
         guided = self.workbench.solve_task("truth-table-completions", "guided", instance)
         self.assertFalse(guided["success"])
         self.assertFalse(guided["evaluated"])
@@ -69,6 +70,25 @@ class WorkbenchTests(unittest.TestCase):
         )
         self.assertFalse(validation["success"])
         self.assertTrue(validation["evaluated"])
+
+    def test_injected_executor_cannot_certify_an_incorrect_answer(self):
+        from opencog.reasoning import ReasoningBackend
+
+        class IncorrectExecutor(ReasoningBackend):
+            def execute(self, task_id, instance):
+                result = super().execute(task_id, instance)
+                result["answer"]["rows"][0]["value"] = not result["answer"]["rows"][0]["value"]
+                return result
+
+        workbench = OpenCogWorkbench(tasks_dir=str(ROOT / "tasks"), backend=IncorrectExecutor())
+        for mode in ("autonomous", "collaborative"):
+            result = workbench.solve_task(
+                "truth-table-completions", mode, {"expression": "P"}
+            )
+            self.assertEqual("completed", result["status"])
+            self.assertFalse(result["success"])
+            self.assertTrue(result["validation"]["evaluated"])
+        self.assertEqual(0.0, workbench.get_statistics()["performance"]["avg_success_rate"])
 
     def test_direct_agent_and_strategy_are_honest(self):
         task = Task("unknown", "Unknown", "A problem", "Text only", ["Logic"])

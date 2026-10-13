@@ -220,7 +220,14 @@ class AgentZero:
         results["solutions"] = (
             [results["answer"]] if results["status"] == "completed" else []
         )
-        results["patterns_used"] = architecture["patterns"]
+        executed_patterns = {
+            "truth-table-completions": ["logical_reasoning_pattern"],
+            "syllogism-reasoning": ["logical_reasoning_pattern"],
+            "towers-of-hanoi": ["recursive_thinking_pattern"]
+        }
+        results["patterns_used"] = (
+            executed_patterns.get(task.id, []) if results["status"] == "completed" else []
+        )
         results["agents_involved"] = architecture["agents"]
         return results
         
