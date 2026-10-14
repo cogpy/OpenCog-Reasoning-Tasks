@@ -2,6 +2,96 @@
 
 ## Overview
 
+### Implementation status
+
+The workbench is a standard-library prototype, not native OpenCog bindings or
+a general-purpose reasoning engine. Its dependency-aware curriculum covers all
+95 task definitions. Executable, bounded backends currently support structured
+truth-table, syllogism, Towers of Hanoi, and stack-ordering instances; other
+families explicitly return `unsupported`. Catalog examples are demonstrations,
+not audited ground truth or certified held-out benchmarks.
+
+### Verified instances and curriculum
+
+```python
+from opencog import OpenCogWorkbench
+
+workbench = OpenCogWorkbench(tasks_dir="tasks")
+result = workbench.solve_task(
+    "truth-table-completions",
+    instance={"expression": "(P AND Q) OR NOT P"},
+)
+assert result["success"]  # Independent validation, not workflow completion.
+
+print(workbench.catalog_report)
+print(workbench.get_curriculum())
+print(workbench.recommend_next_tasks())
+workbench.save_state("workbench-state")
+workbench.load_state("workbench-state")
+```
+
+Calling `solve_task` without a concrete instance no longer reports a solved task.
+Guided mode provides recommendations without changing mastery. Autonomous mode
+executes and validates a bounded backend; collaborative mode runs the five role
+handlers in an ordered, message-traced pipeline. This is synchronous coordination,
+not distributed execution or evidence that multiple agents improve performance.
+Strategy templates remain plans, not implementations of their named actions.
+
+Supported instance schemas:
+
+| Task ID | Input | Answer |
+|---|---|---|
+| `truth-table-completions` | `expression`, optional exact `variables` list | `variables`, and `rows` containing Boolean `assignment`/`value` |
+| `syllogism-reasoning` | `premises` list and `query`, each with `kind`, `subject`, `predicate` | Boolean `entailed`, `contradicted`, `consistent` |
+| `towers-of-hanoi` | Positive integer `disks`, optional distinct `source`, `target`, `auxiliary` names | `moves`, each with `from`/`to` |
+| `stack-based-reasoning` | String list `steps` in **push order** | `pop_order` in reverse order |
+
+Boolean expressions support NOT, AND, OR, XOR, IMPLIES, IFF and parentheses,
+with at most eight variables and bounded expression size/depth. Syllogism kinds
+are `all`, `no`, `some`, `some_not`, `is`, `is_not`; `is`/`is_not` subjects are
+named individuals. At most four predicates, two individuals, and 32 premises
+are supported. Universals have no existential import, and inconsistent premises
+do not entail arbitrary conclusions. Hanoi is limited to ten disks; stack inputs
+are limited to 1024 steps of at most 1024 characters. Inputs exceeding these
+bounds are unsupported rather than attempted without a budget. Free-form
+natural-language descriptions are not automatically converted to these schemas.
+
+`evaluate_instance(task_id, instance, answer, split="practice", transfer=False)`
+checks submitted answers independently. Routine solving records practice only.
+Caller-declared held-out/retention splits are research bookkeeping, not certified
+benchmark isolation; avoid reusing catalog examples as held-out evidence.
+Scheduler evidence, versions, attempts, and execution history survive state
+save/load. Restoring state does not enable unavailable backends.
+
+Curriculum difficulty is a reviewed initial D1–D5 estimate, separate from backend
+readiness. Scheduling checks prerequisite skills, concrete family support, and
+required capabilities, then prioritizes learning need and downstream benefit.
+Unknown prerequisites and cycles are rejected. Mastery requires sufficient
+distinct held-out evidence, at least 95% correctness, successful transfer, and
+a later retention check; practice cannot establish mastery. Advanced families
+remain blocked until their executable backend and independent evaluator exist.
+
+Native AtomSpace/Atomese, URE, PLN, language grounding, causal models, nested
+belief reasoning, expert rubric evaluation, and sandboxed LaTeX generation are
+future integrations. This package does not claim those capabilities and does not
+execute or compile generated documents. Native Python bindings require resolving
+the shared `opencog` package name before integration.
+
+`OpenCogWorkbench(..., backend=adapter)` accepts an alternative implementation of
+the `ReasoningBackend` interface (`execute`, `validate`, `run`, `supported_tasks`,
+`available_capabilities`). An adapter must supply actual independent evaluation;
+declaring capabilities alone does not demonstrate mastery.
+
+Run the standard-library regression suite from the repository root:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The existing JavaScript build generates catalog artifacts; it is not a reasoning
+benchmark. Catalog reports identify malformed files, Markdown/JSON discrepancies,
+and known underdetermined or unsupported example assumptions.
+
 The OpenCog Multi-Agent Orchestration Workbench is a sophisticated framework for autonomous multi-agent orchestration of LLM reasoning tasks. It implements:
 
 - **Agent-Zero**: A master builder that coordinates cognitive architectures
@@ -62,7 +152,9 @@ stats = workbench.get_statistics()
 print(stats)
 
 # Solve a task autonomously
-result = workbench.solve_task("towers-of-hanoi", orchestration_mode="autonomous")
+result = workbench.solve_task(
+    "towers-of-hanoi", orchestration_mode="autonomous", instance={"disks": 3}
+)
 print(result)
 ```
 
@@ -133,16 +225,20 @@ Inspired by Christopher Alexander's architectural patterns, our pattern language
 Main interface for the system.
 
 ```python
-workbench = OpenCogWorkbench(tasks_dir=None, patterns_path=None)
+workbench = OpenCogWorkbench(tasks_dir=None, patterns_path=None, backend=None)
 ```
 
 **Methods:**
 - `load_tasks(tasks_dir)`: Load reasoning tasks from directory
-- `solve_task(task_id, orchestration_mode)`: Solve a task
+- `solve_task(task_id, orchestration_mode, instance=None)`: Execute and independently validate a supported instance
 - `get_task_recommendations(task_id)`: Get recommendations for a task
 - `get_pattern_catalog()`: Get the pattern language catalog
 - `get_statistics()`: Get workbench statistics
 - `save_state(directory)`: Save workbench state
+- `load_state(directory)`: Restore workbench and mastery evidence
+- `get_curriculum()`: Ranked metadata, readiness, and mastery for loaded tasks
+- `recommend_next_tasks(limit=10)`: Prerequisite- and capability-safe recommendations
+- `evaluate_instance(task_id, instance, answer, ...)`: Independently check a submitted answer
 
 ### AgentZero
 
@@ -225,9 +321,9 @@ result = workbench.solve_task(
     orchestration_mode="collaborative"
 )
 
-print("Success:", result['success'])
+print("Success:", result['success'])  # False without a supported concrete instance.
 print("Patterns used:", result['patterns_used'])
-print("Strategy:", result['strategy'])
+print("Execution status:", result['status'])
 ```
 
 ### Example 2: Creating a New Pattern

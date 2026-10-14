@@ -1,5 +1,18 @@
 # OpenCog Multi-Agent Orchestration Workbench - Implementation Summary
 
+## Current status: verified foundation
+
+The historical prototype summary below does not establish task mastery or
+production readiness. The current workbench accounts for 95 catalog definitions,
+encodes all 25 ranked mastery blocks, and persists prerequisite-aware scheduler
+evidence. Structured truth tables, bounded syllogisms, Hanoi, and stack ordering
+have executable backends and independent validators. Unsupported families and
+missing inputs cannot report success or train performance counters.
+
+Native OpenCog integration, general language understanding, probabilistic/causal
+and social reasoning, expert-reviewed synthesis, and sandboxed artifact generation
+remain future stages. See OPENCOG_README.md for current APIs and validation.
+
 ## Overview
 
 Successfully implemented a comprehensive multi-agent orchestration workbench for LLM reasoning tasks with Agent-Zero as the master builder and a living pattern language library for AGI cognitive architectures.
@@ -221,10 +234,11 @@ The OpenCog Multi-Agent Orchestration Workbench successfully implements:
 4. **Strategy Repository** with composable and adaptive problem-solving approaches
 5. **Complete Integration** with all existing reasoning tasks
 
-The system is production-ready, well-documented, and provides a solid foundation for autonomous multi-agent orchestration of LLM reasoning tasks.
+The original implementation provides orchestration scaffolding; production
+readiness and general task mastery are not established.
 
 ---
 
-**Status**: ✅ COMPLETE
+**Status**: Prototype with verified deterministic foundation; advanced backends pending
 **Version**: 1.0.0
 **Date**: 2025-10-26

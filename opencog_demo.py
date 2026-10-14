@@ -113,8 +113,9 @@ def demo_task_solving(workbench):
         print("No tasks loaded. Please ensure tasks are in the 'tasks' directory.")
         return
         
-    # Get a sample task
-    task = list(workbench.tasks.values())[0]
+    # Use a supported concrete instance rather than a task-family description.
+    task = workbench.tasks["truth-table-completions"]
+    instance = {"expression": "(P AND Q) OR NOT P"}
     
     print(f"Solving task: {task.name}")
     print(f"Description: {task.description}")
@@ -137,10 +138,15 @@ def demo_task_solving(workbench):
     print("Solving task in COLLABORATIVE mode...")
     print(f"{'-'*80}\n")
     
-    result = workbench.solve_task(task.id, orchestration_mode="collaborative")
+    result = workbench.solve_task(
+        task.id, orchestration_mode="collaborative", instance=instance
+    )
     
     print("Solution Result:")
     print(f"  Success: {result.get('success', 'Unknown')}")
+    print(f"  Status: {result['status']}")
+    print(f"  Answer: {result['answer']}")
+    print(f"  Next tasks: {workbench.recommend_next_tasks()}")
     print(f"  Patterns Used: {', '.join(result.get('patterns_used', []))}")
     if 'strategy' in result:
         print(f"  Strategy: {result['strategy']}")
@@ -205,8 +211,10 @@ def demo_pattern_evolution(workbench):
     print("DEMO 6: Pattern Evolution and Learning")
     print("="*80 + "\n")
     
-    # Record some pattern uses
-    pattern = workbench.pattern_library.get_pattern("decomposition_pattern")
+    # Keep illustrative counters separate from evaluated workbench performance.
+    from opencog.patterns.pattern_library import PatternLanguageLibrary
+    demo_library = PatternLanguageLibrary()
+    pattern = demo_library.get_pattern("decomposition_pattern")
     
     if pattern:
         print(f"Pattern: {pattern.name}")
@@ -216,10 +224,10 @@ def demo_pattern_evolution(workbench):
         print(f"  Quality: {pattern.quality.value}")
         
         # Simulate pattern uses
-        print("\nSimulating pattern uses...")
+        print("\nSimulating isolated pattern uses (not mastery evidence)...")
         for i in range(10):
             success = i % 4 != 0  # 75% success rate
-            workbench.pattern_library.record_pattern_use(pattern.id, success)
+            demo_library.record_pattern_use(pattern.id, success)
             
         print(f"\nAfter 10 uses:")
         print(f"  Use count: {pattern.use_count}")
@@ -231,7 +239,7 @@ def demo_pattern_evolution(workbench):
             "task": "Complex system analysis",
             "application": "Decomposed system into components, analyzed each, then integrated findings"
         }
-        workbench.pattern_library.evolve_pattern(pattern.id, new_example)
+        demo_library.evolve_pattern(pattern.id, new_example)
         print(f"\nAdded new example to pattern. Total examples: {len(pattern.examples)}")
 
 
